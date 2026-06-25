@@ -170,6 +170,37 @@ button {
   .sg { grid-template-columns: 1fr 1fr; }
 }
 
+/* ── Custom tooltip ── */
+.tip {
+  position: relative; display: inline-block;
+  cursor: help; color: #8b949e;
+  font-size: 0.68rem; font-weight: 700;
+  width: 14px; height: 14px; line-height: 14px; text-align: center;
+  border: 1px solid #444c56; border-radius: 50%;
+  vertical-align: middle; margin-left: 3px;
+  user-select: none;
+}
+.tip::after {
+  content: attr(data-tip);
+  position: absolute; bottom: calc(100% + 7px); left: 50%;
+  transform: translateX(-50%);
+  background: #e6edf3; color: #0d1117;
+  font-size: 0.75rem; font-weight: 500; line-height: 1.4;
+  white-space: nowrap; padding: 5px 10px; border-radius: 5px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.55);
+  pointer-events: none; opacity: 0; transition: opacity 0.15s;
+  z-index: 99;
+}
+.tip::before {
+  content: '';
+  position: absolute; bottom: calc(100% + 2px); left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: #e6edf3;
+  pointer-events: none; opacity: 0; transition: opacity 0.15s;
+  z-index: 99;
+}
+.tip:hover::after, .tip:hover::before { opacity: 1; }
+
 /* ── 3D Mode ── */
 .toggle-3d {
   display: inline-flex; position: relative; align-items: center;
@@ -223,18 +254,20 @@ button {
 <div class="header">
   <h1>LLM Serving Simulator</h1>
   <p>Same model weights &nbsp;·&nbsp; Same GPU &nbsp;·&nbsp; <strong style="color:#e6edf3">Different engine</strong></p>
+  <div style="display:flex;justify-content:center;margin-bottom:14px;">
+    <div class="toggle-3d" id="btn-3d" role="button" tabindex="0">
+      <span class="t-flat">Flat</span>
+      <span class="t-3d">3D</span>
+    </div>
+  </div>
   <div class="controls">
-    <label>Concurrent Requests:</label>
+    <label>Concurrent Requests: <span class="tip" data-tip="Slider: 1–100  |  Type directly: 1–100,000">?</span></label>
     <input type="range" id="n-slider" min="1" max="100" value="16">
     <input type="number" id="n-input" min="1" max="100000" value="16">
     <label style="margin-left:8px">vLLM max batch:</label>
     <input type="number" id="mb-input" min="1" max="256" value="16">
     <button id="btn-run">▶ Run</button>
     <button id="btn-reset">↺ Reset</button>
-    <div class="toggle-3d" id="btn-3d" role="button" tabindex="0">
-      <span class="t-flat">Flat</span>
-      <span class="t-3d">3D</span>
-    </div>
   </div>
 </div>
 
@@ -366,7 +399,7 @@ class Scene3D {
 
     this.scene  = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(52, w / h, 0.1, 300);
-    this._camR  = 40;
+    this._camR  = 45;
     this._camA  = 150;
     this._camY  = 30;
     this._updateCamera();
@@ -503,19 +536,30 @@ class Scene3D {
   }
 
   _pos(lane, state, idx, total) {
-    const z = lane === 'hf' ? -7 : 7;
-    const cols = 9, sp = 0.85;
-    if (state === 'queue')
-      return new THREE.Vector3(-20 + (idx % cols) * sp - (cols / 2 - 0.5) * sp,
-                               Math.floor(idx / cols) * sp - 1.5, z);
+    const laneZ = lane === 'hf' ? -7 : 7;
+    const COLS = 4, DEPS = 4, sp = 0.85;
+    const perLayer = COLS * DEPS;
+
+    const gridPos = (baseX, i) => {
+      const floor = Math.floor(i / perLayer);
+      const local = i % perLayer;
+      const col = local % COLS;
+      const dep = Math.floor(local / COLS);
+      return new THREE.Vector3(
+        baseX + (col - (COLS - 1) / 2) * sp,
+        floor * sp - 1.5,
+        laneZ + (dep - (DEPS - 1) / 2) * sp
+      );
+    };
+
+    if (state === 'queue') return gridPos(-20, idx);
     if (state === 'gpu') {
-      if (lane === 'hf') return new THREE.Vector3(0, 0, z);
+      if (lane === 'hf') return new THREE.Vector3(0, 0, laneZ);
       const a = (idx / Math.max(total, 1)) * Math.PI * 2;
       const r = Math.min(1.4 + total * 0.22, 4.2);
-      return new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r * 0.55, z);
+      return new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r * 0.55, laneZ);
     }
-    return new THREE.Vector3(20 + (idx % cols) * sp - (cols / 2 - 0.5) * sp,
-                             Math.floor(idx / cols) * sp - 1.5, z);
+    return gridPos(20, idx);
   }
 
   update(s) {
@@ -1138,7 +1182,6 @@ $('btn-3d').addEventListener('click', () => {
 setN(16);
 initMem('hf-mem');
 initMem('vllm-mem');
-$('btn-3d').click();
 </script>
 </body>
 </html>
