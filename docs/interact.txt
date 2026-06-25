@@ -88,3 +88,145 @@ OPEN DECISIONS (decide tmr)
    - Currently fully given - student just runs it
    - Could make them fill in one axis label or color choice as low-stakes engagement
    - Probably not worth it, visualization is not the learning objective here
+
+---
+
+SOLUTION REFERENCE (instructor copy - full cells with TODOs filled)
+=====================================================================
+
+--- cell-7: baseline_generate (Exp A) ---
+
+def baseline_generate(prompt):
+    # ต้องใช้ chat template เพื่อให้ baseline และ vLLM ได้รับ prompt format เดียวกัน
+    # ถ้าไม่ทำ Exp C จะเทียบผลไม่ได้ เพราะ input จริงๆ ต่างกัน
+    messages = [{'role': 'user', 'content': prompt}]
+    text_input = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    inputs = tokenizer(text_input, return_tensors='pt').to(model.device)
+    with torch.no_grad():
+        t0 = time.perf_counter()
+
+        output = model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
+
+        t1 = time.perf_counter()
+
+    generated_ids = output[0][inputs['input_ids'].shape[1]:]
+    text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+    latency = t1 - t0
+    n_tokens = len(generated_ids)
+    return text, latency, n_tokens
+
+# warmup 1 ครั้งก่อนวัดจริง - run แรก GPU ยัง cold อยู่ CUDA kernel ยังไม่ compile
+# ถ้าไม่ warmup latency run แรกจะสูงผิดปกติทำให้ค่าเฉลี่ยเบี้ยว
+baseline_generate(BENCHMARK_PROMPT)
+
+latencies = []
+for i in range(N_RUNS):
+    text, latency, n_tokens = baseline_generate(BENCHMARK_PROMPT)
+    latencies.append(latency)
+    print(f'Run {i+1}: {latency:.2f}s | {n_tokens/latency:.1f} tok/s')
+
+results['baseline']['exp_a'] = {
+    'latencies': latencies,
+    'mean': sum(latencies) / len(latencies),
+    'output_sample': text,
+}
+print(f'\nMean latency: {results["baseline"]["exp_a"]["mean"]:.2f}s')
+
+
+--- cell-9: Exp B baseline loop ---
+
+baseline_exp_b = {}
+
+for n in CONCURRENCY_LEVELS:
+    batch = [PROMPTS[i % len(PROMPTS)] for i in range(n)]
+    t0 = time.perf_counter()
+    total_tokens = 0
+    # loop นี้คือ naive serving - ประมวลผลทีละ request ไม่มี batching
+    # จำลองว่า server ธรรมดารับ user 1 คนต่อครั้ง user ที่เหลือรอคิว
+    for prompt in batch:
+        _, _, n_tok = baseline_generate(prompt)
+        total_tokens += n_tok
+    elapsed = time.perf_counter() - t0
+    throughput = total_tokens / elapsed
+    baseline_exp_b[n] = throughput
+    print(f'Concurrency {n:2d} | {throughput:6.1f} tok/s | {elapsed:.1f}s total')
+
+results['baseline']['exp_b'] = baseline_exp_b
+print('\nBaseline Exp B done.')
+
+
+--- cell-15: vllm_generate (Exp A vLLM) ---
+
+from openai import OpenAI
+
+client = OpenAI(base_url='http://localhost:8000/v1', api_key='dummy')
+
+def vllm_generate(prompt):
+    t0 = time.perf_counter()
+    resp = client.chat.completions.create(
+        model=MODEL_ID,
+        messages=[{'role': 'user', 'content': prompt}],
+        max_tokens=MAX_NEW_TOKENS,
+        temperature=0,
+    )
+    latency = time.perf_counter() - t0
+    text = resp.choices[0].message.content
+    n_tokens = resp.usage.completion_tokens
+    return text, latency, n_tokens
+
+# warmup
+vllm_generate(BENCHMARK_PROMPT)
+
+latencies = []
+for i in range(N_RUNS):
+    text, latency, n_tokens = vllm_generate(BENCHMARK_PROMPT)
+    latencies.append(latency)
+    print(f'Run {i+1}: {latency:.2f}s | {n_tokens/latency:.1f} tok/s')
+
+results['vllm']['exp_a'] = {
+    'latencies': latencies,
+    'mean': sum(latencies) / len(latencies),
+    'output_sample': text,
+}
+print(f'\nMean latency: {results["vllm"]["exp_a"]["mean"]:.2f}s')
+
+
+--- cell-17: run_concurrent (Exp B vLLM) ---
+
+from openai import AsyncOpenAI
+
+async_client = AsyncOpenAI(base_url='http://localhost:8000/v1', api_key='dummy')
+
+# AsyncOpenAI ส่ง HTTP request แบบ non-blocking ทำให้ await ได้โดยไม่ block thread
+async def vllm_generate_async(prompt):
+    resp = await async_client.chat.completions.create(
+        model=MODEL_ID,
+        messages=[{'role': 'user', 'content': prompt}],
+        max_tokens=MAX_NEW_TOKENS,
+        temperature=0,
+    )
+    return resp.usage.completion_tokens
+
+async def run_concurrent(n):
+    batch = [PROMPTS[i % len(PROMPTS)] for i in range(n)]
+    t0 = time.perf_counter()
+    # asyncio.gather ส่ง request ทุกตัวพร้อมกันในทีเดียว
+    # vLLM ฝั่ง server รับทุก request แล้วจัดการผ่าน continuous batching อัตโนมัติ
+    token_counts = await asyncio.gather(*[vllm_generate_async(p) for p in batch])
+    elapsed = time.perf_counter() - t0
+    return sum(token_counts) / elapsed
+
+async def run_all_concurrent():
+    out = {}
+    for n in CONCURRENCY_LEVELS:
+        out[n] = await run_concurrent(n)
+        print(f'Concurrency {n:2d} | {out[n]:6.1f} tok/s')
+    return out
+
+# ใช้ get_event_loop().run_until_complete() แทน asyncio.run()
+# เพราะ asyncio.run() จะ close loop หลังจบ ทำให้ AsyncOpenAI client error ใน iteration ถัดไป
+vllm_exp_b = asyncio.get_event_loop().run_until_complete(run_all_concurrent())
+results['vllm']['exp_b'] = vllm_exp_b
+print('\nvLLM Exp B done.')
