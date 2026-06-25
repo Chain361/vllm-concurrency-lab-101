@@ -65,6 +65,6 @@ token_counts = await asyncio.gather(*[vllm_generate_async(p) for p in batch])  #
 | Cell 15 - OpenAI API call | API abstraction | HF และ vLLM ใช้ parameter คนละชื่อแต่ความหมายเหมือนกัน - engine เปลี่ยน client code แทบไม่ต้องเปลี่ยน |
 | Cell 17 - asyncio.gather | Concurrency model | `gather` = ส่งพร้อมกัน, `await` ใน loop = ทีละตัว - ต่างกันคือ throughput ทั้งหมด |
 
-**Big picture:** weights เหมือนกัน แต่ engine เปลือง resource ต่างกัน
-HF ทำ 1 request แล้ว GPU ว่าง รอ request ถัดไป
-vLLM ใช้ KV cache block + continuous batching ทำให้ GPU ไม่ว่างเลย throughput จึง scale
+**Big picture:** weights เหมือนกัน แต่ engine ใช้ GPU ต่างกัน
+HF: ประมวลผล batch=1 ทีละ request - GPU ใช้ parallel compute ได้ไม่เต็มที่
+vLLM: PagedAttention จัดการ KV cache เป็น block ทำให้รับ request พร้อมกันได้มากขึ้นโดยไม่ OOM, continuous batching รวมทุก request เข้า forward pass เดียวกัน ทำให้ GPU saturated throughput จึง scale
