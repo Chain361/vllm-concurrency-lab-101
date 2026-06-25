@@ -227,9 +227,21 @@ async def run_concurrent(n):
 
 async def run_all_concurrent():
     out = {}
+    _log = open('vLLM-B.log', 'w')
     for n in CONCURRENCY_LEVELS:
-        out[n] = await run_concurrent(n)
-        print(f'Concurrency {n:2d} | {out[n]:6.1f} tok/s')
+        throughput = await run_concurrent(n)
+        batch = [PROMPTS[i % len(PROMPTS)] for i in range(n)]
+        out[n] = throughput
+        print(f'Concurrency {n:2d} | {throughput:6.1f} tok/s')
+        _log.write(f'=== Concurrency {n} ===\n')
+        for j, prompt in enumerate(batch):
+            _log.write(f'ask#{j+1}: {prompt}\n')
+        _log.write(f'throughput: {throughput:.1f} tok/s\n\n')
+    _log.write('--- Summary ---\n')
+    for n, tps in out.items():
+        _log.write(f'Concurrency {n:2d}: {tps:.1f} tok/s\n')
+    _log.close()
+    print('Saved: vLLM-B.log')
     return out
 
 # ใช้ get_event_loop().run_until_complete() แทน asyncio.run()
