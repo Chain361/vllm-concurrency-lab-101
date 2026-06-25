@@ -1,4 +1,4 @@
-# vLLM Concurrency Lab 101
+# Serving LLMs at Scale: Baseline vs vLLM
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Nukaze/vllm-concurrency-lab-101/blob/main/lab.ipynb)
 
