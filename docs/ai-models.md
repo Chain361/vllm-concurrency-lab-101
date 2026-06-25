@@ -1,5 +1,7 @@
 # Alternative Models for vLLM Concurrency Lab
 
+> **Browse models:** [huggingface.co/models](https://huggingface.co/models?pipeline_tag=text-generation&sort=trending) - filter by `text-generation`, sort by Trending or Downloads
+
 Drop-in replacements for `Qwen/Qwen2.5-1.5B-Instruct`
 
 ## How to Use
